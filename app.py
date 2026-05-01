@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from health_backend import run_analysis, generate_health_summary
+from health_backend import run_analysis
 
 # ✅ FIX: Use deep-translator (works with Python 3.13)
 from deep_translator import GoogleTranslator
