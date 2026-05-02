@@ -1,14 +1,19 @@
 import streamlit as st
 import os
-from health_backend import run_analysis, generate_health_summary
+from health_backend import run_analysis
 
-# ✅ FIX: Use deep-translator (works with Python 3.13)
+# ✅ SSL FIX: Ensure translator works by pointing to correct CA certificates
+import certifi
+os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+os.environ['SSL_CERT_FILE'] = certifi.where()
+
 from deep_translator import GoogleTranslator
 
 def translate_to_gujarati(text):
     try:
+        if not text or text.strip() == "": return text
         return GoogleTranslator(source='auto', target='gu').translate(text)
-    except:
+    except Exception as e:
         return text
 
 
@@ -62,36 +67,59 @@ if uploaded_file is not None:
 
         st.markdown("---")
 
-        st.subheader("📊 Extracted Parameters")
+        # 🌐 Dynamic UI Subheaders
+        ext_title = "📊 Extracted Parameters"
+        rep_title = "Formatted Medical Report"
+        vis_title = "📈 Parameter Visualization"
+        if language == "Gujarati":
+            ext_title = translate_to_gujarati(ext_title)
+            rep_title = translate_to_gujarati(rep_title)
+            vis_title = translate_to_gujarati(vis_title)
+
+        st.subheader(ext_title)
 
         if results:
+            # 🌐 Prepare strings for batch translation
+            display_list = []
             for r in results:
-                text = f"{r['parameter']} : {r['value']} {r['unit']} ({r['status']})"
+                display_list.append(f"{r['parameter']} : {r['value']} {r['unit']} ({r['status']})")
+            
+            # Batch Translate if needed
+            if language == "Gujarati":
+                with st.spinner("Translating results..."):
+                    try:
+                        full_text = "\n".join(display_list)
+                        translated_text = translate_to_gujarati(full_text)
+                        display_list = translated_text.split("\n")
+                    except: pass
 
-                # 🌐 Translate
-                if language == "Gujarati":
-                    text = translate_to_gujarati(text)
-
-                if "🚨" in r['status']:
-                    st.error(text)
-                elif "🔴" in r['status']:
-                    st.error(text)
-                elif "🟡" in r['status']:
-                    st.warning(text)
-                elif "🟢" in r['status']:
-                    st.success(text)
-                else:
-                    st.info(text)
+            # Display results
+            for i, r in enumerate(results):
+                text = display_list[i] if i < len(display_list) else f"{r['parameter']} : {r['value']} {r['unit']} ({r['status']})"
+                if "🚨" in r['status'] or "🔴" in r['status']: st.error(text)
+                elif "🟡" in r['status']: st.warning(text)
+                elif "🟢" in r['status']: st.success(text)
+                else: st.info(text)
         else:
             st.warning("No parameters detected")
 
         st.markdown("---")
+        st.subheader(rep_title)
 
-        st.subheader("Formatted Medical Report")
-
-        # 🌐 Translate formatted report
+        # 🌐 Full Report Translation
         if language == "Gujarati":
-            formatted_report = translate_to_gujarati(formatted_report)
+            with st.spinner("Translating full report..."):
+                try:
+                    # Translate line by line or by sections to ensure 100% coverage
+                    lines = formatted_report.split("\n")
+                    translated_lines = []
+                    for line in lines:
+                        if line.strip():
+                            translated_lines.append(translate_to_gujarati(line))
+                        else:
+                            translated_lines.append("")
+                    formatted_report = "\n".join(translated_lines)
+                except: pass
 
         st.text(formatted_report)
 
