@@ -1,4 +1,7 @@
 import os, re, warnings
+from PIL import Image
+import pytesseract
+
 warnings.filterwarnings('ignore')
 
 PARAMETERS = {
@@ -64,8 +67,6 @@ def _opt(n):
     except: return None
 
 fitz = _opt('fitz')
-pytesseract = _opt('pytesseract')
-Image = _opt('PIL.Image')
 pdf2image = _opt('pdf2image')
 
 PARAM_KB = {
@@ -101,15 +102,93 @@ PARAM_KB = {
     'Glucose': {'kw':['glucose','sugar'],'valid':[30,600],'unit':'mg/dL','ref':{'gen':(70,140)},'cat':'Metabolic'}
 }
 
+REASON_DB = {
+
+    "Hemoglobin": {
+        "LOW": ["Iron Deficiency", "Blood Loss", "Kidney Disease"],
+        "HIGH": ["Dehydration", "Smoking", "Lung Disease"]
+    },
+
+    "RBC": {
+        "LOW": ["Anemia", "Blood Loss", "Nutritional Deficiency"],
+        "HIGH": ["Polycythemia", "Dehydration"]
+    },
+
+    "PCV": {
+        "LOW": ["Anemia", "Blood Loss"],
+        "HIGH": ["Dehydration"]
+    },
+
+    "MCV": {
+        "LOW": ["Iron Deficiency Anemia"],
+        "HIGH": ["Vitamin B12 Deficiency"]
+    },
+
+    "MCH": {
+        "LOW": ["Iron Deficiency"],
+        "HIGH": ["Vitamin Deficiency"]
+    },
+
+    "MCHC": {
+        "LOW": ["Iron Deficiency"],
+        "HIGH": ["Spherocytosis"]
+    },
+
+    "RDW": {
+        "HIGH": ["Anemia", "Vitamin Deficiency"]
+    },
+
+    "Platelets": {
+        "LOW": ["Dengue", "Viral Infection", "Bone Marrow Issue"],
+        "HIGH": ["Inflammation", "Infection"]
+    },
+
+    "Neutrophils": {
+        "HIGH": ["Bacterial Infection", "Stress", "Inflammation"],
+        "LOW": ["Viral Infection", "Weak Immunity"]
+    },
+
+    "WBC": {
+        "LOW": ["Viral Infection", "Weak Immunity", "Bone Marrow Problem"],
+        "HIGH": ["Bacterial Infection", "Inflammation", "Leukemia"]
+    },
+
+    "Lymphocytes": {
+        "LOW": ["Weak Immune System", "Stress", "HIV Infection"],
+        "HIGH": ["Viral Infection", "Tuberculosis"]
+    },
+
+    "Monocytes": {
+        "LOW": ["Bone Marrow Suppression"],
+        "HIGH": ["Chronic Infection", "Inflammation", "Tuberculosis"]
+    },
+
+    "Bilirubin Direct": {
+        "HIGH": ["Liver Disease", "Bile Duct Obstruction"]
+    },
+
+    "Protein": {
+        "LOW": ["Malnutrition", "Liver Disease"]
+    },
+
+    "Albumin": {
+        "LOW": ["Liver Disease", "Kidney Disease", "Malnutrition"]
+    }
+}
+
+
 def extract_text(path):
+    # PDF
     if path.lower().endswith(".pdf") and fitz:
         text = ""
         for page in fitz.open(path):
             text += page.get_text()
         return text
 
-    if pytesseract and Image:
-        return pytesseract.image_to_string(Image.open(path))
+    # Image
+    if pytesseract:
+        img = Image.open(path)
+        return pytesseract.image_to_string(img)
 
     return ""
 
@@ -193,65 +272,33 @@ def extract_params(text):
 
     return extracted
 
-def analyze_parameter(name, value):
-    ref = PARAMETERS.get(name)
+def analyze_parameter(name, value, gender='gen'):
+    c = PARAM_KB[name]
+    lo, hi = c['ref'].get(gender, c['ref']['gen'])
 
-    if ref:
-        lo = ref["min"]
-        hi = ref["max"]
-        unit = ref["unit"]
+    if value < lo:
+        status = "LOW"
+    elif value > hi:
+        status = "HIGH"
+    else:
+        status = "NORMAL"
 
-        if value < lo:
-            status = "LOW"
-            reasons = ref["low_reasons"]
-        elif value > hi:
-            status = "HIGH"
-            reasons = ref["high_reasons"]
-        else:
-            status = "NORMAL"
-            reasons = []
+    reasons = []
+    if status != "NORMAL":
+        reasons = REASON_DB.get(name, {}).get(status, [])
 
-        return {
-            "parameter": name,
-            "value": value,
-            "unit": unit,
-            "low": lo,
-            "high": hi,
-            "status": status,
-            "reasons": reasons
-        }
-
-    c = PARAM_KB.get(name)
-    if c:
-        lo_hi = c['ref'].get('gen') if 'gen' in c['ref'] else next(iter(c['ref'].values()))
-        lo, hi = lo_hi
-        unit = c.get('unit', '')
-
-        if value < lo:
-            status = "LOW"
-        elif value > hi:
-            status = "HIGH"
-        else:
-            status = "NORMAL"
-
-        return {
-            "parameter": name,
-            "value": value,
-            "unit": unit,
-            "low": lo,
-            "high": hi,
-            "status": status,
-            "reasons": []
-        }
+        if not reasons:
+            reasons = ["General medical condition", "Consult doctor"]
 
     return {
         "parameter": name,
         "value": value,
-        "unit": "",
-        "low": None,
-        "high": None,
-        "status": "UNKNOWN",
-        "reasons": []
+        "unit": c['unit'],
+        "low": lo,
+        "high": hi,
+        "status": status,
+        "reasons": reasons,
+        "cat": c['cat']
     }
 
 
@@ -266,7 +313,7 @@ def generate_interpretation(results):
             summary.append(line)
 
     if not summary:
-        return "✅ All parameters are within normal range."
+        return " All parameters are within normal range."
 
     return "🧠 Key Findings:\n\n" + "\n".join(summary)
 
