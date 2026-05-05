@@ -1,6 +1,6 @@
 import streamlit as st
 import os
-from health_backend import run_analysis
+from backend.engine import run_analysis
 
 # ✅ SSL FIX: Ensure translator works by pointing to correct CA certificates
 import certifi
@@ -39,8 +39,8 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file is not None:
 
-    os.makedirs("temp", exist_ok=True)
-    file_path = os.path.join("temp", uploaded_file.name)
+    os.makedirs("uploads", exist_ok=True)
+    file_path = os.path.join("uploads", uploaded_file.name)
 
     with open(file_path, "wb") as f:
         f.write(uploaded_file.read())
