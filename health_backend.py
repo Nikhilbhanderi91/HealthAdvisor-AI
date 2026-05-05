@@ -1,188 +1,312 @@
 import os, re, warnings
 warnings.filterwarnings('ignore')
 
-# 1. MODULES (Centralized Optional Handler)
+PARAMETERS = {
+    "Hemoglobin": {
+        "min": 12.0, "max": 17.5, "unit": "g/dL",
+        "low_reasons": ["Iron Deficiency", "Blood Loss", "Kidney Disease"],
+        "high_reasons": ["Dehydration", "Smoking"]
+    },
+    "RBC": {
+        "min": 4.2, "max": 5.5, "unit": "M/μL",
+        "low_reasons": ["Anemia", "Blood Loss", "Nutritional Deficiency"],
+        "high_reasons": ["Dehydration", "Bone Marrow Disorder"]
+    },
+    "PCV": {
+        "min": 38, "max": 52, "unit": "%",
+        "low_reasons": ["Anemia", "Blood Loss"],
+        "high_reasons": ["Dehydration"]
+    },
+    "MCV": {
+        "min": 78, "max": 98, "unit": "fL",
+        "low_reasons": ["Iron Deficiency Anemia"],
+        "high_reasons": ["Vitamin B12 Deficiency"]
+    },
+    "MCH": {
+        "min": 27, "max": 32, "unit": "pg",
+        "low_reasons": ["Iron Deficiency"],
+        "high_reasons": ["Macrocytic Anemia"]
+    },
+    "MCHC": {
+        "min": 32, "max": 36, "unit": "g/dL",
+        "low_reasons": ["Iron Deficiency"],
+        "high_reasons": ["Hereditary Spherocytosis"]
+    },
+    "RDW": {
+        "min": 11, "max": 15, "unit": "%",
+        "low_reasons": [],
+        "high_reasons": ["Anemia", "Vitamin Deficiency"]
+    },
+    "Platelets": {
+        "min": 150000, "max": 400000, "unit": "/μL",
+        "low_reasons": ["Dengue", "Viral Infection", "Bone Marrow Issue"],
+        "high_reasons": ["Inflammation", "Infection"]
+    },
+    "Bilirubin Direct": {
+        "min": 0.0, "max": 0.4, "unit": "mg/dL",
+        "low_reasons": [],
+        "high_reasons": ["Liver Disease", "Bile Duct Obstruction"]
+    },
+    "Protein": {
+        "min": 6.3, "max": 8.3, "unit": "g/dL",
+        "low_reasons": ["Malnutrition", "Liver Disease"],
+        "high_reasons": ["Dehydration"]
+    },
+    "Albumin": {
+        "min": 3.5, "max": 5.0, "unit": "g/dL",
+        "low_reasons": ["Liver Disease", "Kidney Disease", "Malnutrition"],
+        "high_reasons": ["Dehydration"]
+    }
+}
+
 def _opt(n):
     try: return __import__(n)
     except: return None
-fitz, pytesseract, easyocr, Image, pdf2image = _opt('fitz'), _opt('pytesseract'), _opt('easyocr'), _opt('PIL.Image'), _opt('pdf2image')
 
-# 2. AI KNOWLEDGE BASE (Standardized Reference Ranges)
+fitz = _opt('fitz')
+pytesseract = _opt('pytesseract')
+Image = _opt('PIL.Image')
+pdf2image = _opt('pdf2image')
+
 PARAM_KB = {
-    'Hemoglobin': {
-        'kw': ['haemoglobin', 'hemoglobin', 'hb', 'hgb'], 'valid': [3, 25], 'unit': 'g/dL', 
-        'ref': {'male': (13.5, 17.5), 'female': (12.0, 16.0), 'gen': (12.5, 17.0)}, 
-        't': {'v_low': 7.0, 'mod_low': 10.0, 's_low': 11.5}, 'cat': 'Hematology',
-        'advice': {
-            '🚨 VERY LOW': 'EMERGENCY ❗ Critical Anemia. Consult doctor IMMEDIATELY.', 
-            '🔴 MODERATE LOW': 'Significant Anemia. Consult Doctor for investigation.',
-            '🔴 LOW': 'Anemia detected. Consult Doctor + Iron-rich diet (Dates, Veggies).', 
-            '🟡 Slight LOW': 'Routine Doctor Consultation + Iron/Ferritin profiling.'
-        }
-    },
-    'RBC': {'kw': ['rbc', 'red blood'], 'valid': [1, 10], 'unit': 'M/μL', 'ref': {'male': (4.5, 6.0), 'female': (4.0, 5.4), 'gen': (4.2, 5.5)}, 'cat': 'Hematology'},
-    'WBC': {
-        'kw': ['wbc', 'total count'], 'valid': [100, 100000], 'unit': '/μL', 
-        'ref': {'gen': (4000, 10000)}, 't': {'v_low': 1500}, 'cat': 'Hematology',
-        'advice': {'🚨 VERY LOW': 'Immediate Hospitalization ❗ Severe infection risk.', '🔴 LOW': 'Weakened immunity. Rest and avoid crowds.'}
-    },
-    'ANC': {
-        'kw': ['absolute neutrophils count', 'anc'], 'valid': [0, 10000], 'unit': '/μL',
-        'ref': {'gen': (2000, 7000)}, 't': {'v_low': 500, 'mod_low': 1000}, 'cat': 'Hematology',
-        'advice': {'🚨 VERY LOW': 'CRITICAL ❗ Severe Neutropenia. Extremely high infection risk. Fatal if untreated.'}
-    },
-    'Platelets': {
-        'kw': ['platelet', 'plt'], 'valid': [1000, 1e6], 'unit': '/μL', 
-        'ref': {'gen': (150000, 450000)}, 't': {'v_low': 50000}, 'cat': 'Hematology',
-        'advice': {'🚨 CRITICAL LOW': 'EMERGENCY ❗ High bleeding risk. Avoid any trauma/NSAIDs.'}
-    },
-    'PCV': {'kw': ['pcv', 'hct'], 'valid': [10, 70], 'unit': '%', 'ref': {'male': (40, 52), 'female': (36, 48), 'gen': (38, 50)}, 'cat': 'Hematology'},
-    'MCV': {
-        'kw': ['mcv'], 'valid': [40, 150], 'unit': 'fL', 'ref': {'gen': (78, 98)}, 't': {'v_low': 60}, 'cat': 'Hematology',
-        'advice': {'🔴 LOW (Microcytic)': 'Iron deficiency/Thalassemia check.', '🟡 HIGH (Macrocytic)': 'Check Vit B12/Folate.'}
-    },
-    'MCH': {'kw': ['mch'], 'valid': [10, 50], 'unit': 'pg', 'ref': {'gen': (27, 32)}, 'cat': 'Hematology'},
-    'Creatinine': {
-        'kw': ['creatinine', 's.creatinine'], 'valid': [0.1, 15], 'unit': 'mg/dL', 'ref': {'gen': (0.6, 1.4)}, 't': {'mod_high': 1.5, 'v_high': 3.0}, 'cat': 'Renal',
-        'advice': {'🔴 HIGH': 'Kidney Strain. Consult Nephrologist. Hydrate and avoid NSAIDs.', '🔴 LOW': 'Usually due to low muscle mass (Common in teens).'}
-    },
-    'eGFR': {
-        'kw': ['egfr', 'gfr'], 'valid': [5, 200], 'unit': 'mL/min', 'ref': {'gen': (90, 130)}, 't': {'v_low': 15, 'mod_low': 60, 's_low': 89}, 'cat': 'Renal',
-        'advice': {'🔴 Stage 3 CKD': 'Moderate Kidney Impairment. Nephrology consultation MANDATORY.'}
-    },
-    'Glucose': {'kw': ['glucose', 'sugar', 'rbs'], 'valid': [30, 600], 'unit': 'mg/dL', 'ref': {'gen': (70, 140)}, 'cat': 'Metabolic'},
-    'CRP': {
-        'kw': ['crp', 'reactive protein'], 'valid': [0, 1000], 'unit': 'mg/L', 'ref': {'gen': (0, 6)}, 't': {'s_high': 50, 'mod_high': 100, 'v_high': 300}, 'cat': 'Inflammation',
-        'advice': {'🚨 VERY HIGH': 'Critical Sepsis/Inflammation ❗ Emergency medical review required.'}
-    },
-    'Sodium': {'kw': ['sodium'], 'valid': [100, 200], 'unit': 'mmol/L', 'ref': {'gen': (135, 148)}, 'cat': 'Electrolytes'},
-    'Potassium': {'kw': ['potassium'], 'valid': [1, 10], 'unit': 'mmol/L', 'ref': {'gen': (3.5, 5.3)}, 'cat': 'Electrolytes'},
-    'Chloride': {'kw': ['chloride'], 'valid': [50, 150], 'unit': 'mmol/L', 'ref': {'gen': (98, 107)}, 'cat': 'Electrolytes'},
-    'Cholesterol': {'kw': ['cholesterol'], 'valid': [50, 500], 'unit': 'mg/dL', 'ref': {'gen': (0, 200)}, 'cat': 'Lipids'},
-    'HbA1c': {'kw': ['hba1c'], 'valid': [3, 20], 'unit': '%', 'ref': {'gen': (0, 5.7)}, 't': {'pre': 6.4}, 'cat': 'Metabolic'}
+
+    # 🧬 CBC
+    'Hemoglobin': {'kw': ['haemoglobin','hemoglobin','hb'], 'valid':[3,25],'unit':'g/dL','ref':{'gen':(12.5,17.5)},'cat':'Hematology'},
+    'RBC': {'kw':['rbc'],'valid':[1,10],'unit':'M/μL','ref':{'gen':(4.2,5.5)},'cat':'Hematology'},
+    'WBC': {'kw':['wbc','total count'],'valid':[100,100000],'unit':'/μL','ref':{'gen':(4000,10000)},'cat':'Hematology'},
+    'Platelets': {'kw':['platelet'],'valid':[1000,1e6],'unit':'/μL','ref':{'gen':(150000,450000)},'cat':'Hematology'},
+
+    'PCV': {'kw':['pcv','hct'],'valid':[10,70],'unit':'%','ref':{'gen':(38,52)},'cat':'Hematology'},
+    'MCV': {'kw':['mcv'],'valid':[40,150],'unit':'fL','ref':{'gen':(78,98)},'cat':'Hematology'},
+    'MCH': {'kw':['mch'],'valid':[10,50],'unit':'pg','ref':{'gen':(27,32)},'cat':'Hematology'},
+    'MCHC': {'kw':['mchc'],'valid':[20,50],'unit':'g/dL','ref':{'gen':(32,36)},'cat':'Hematology'},
+    'RDW': {'kw':['rdw'],'valid':[5,40],'unit':'%','ref':{'gen':(11,15)},'cat':'Hematology'},
+
+    # 🧪 Differential
+    'Neutrophils': {'kw':['polymorphs','neutrophils'],'valid':[0,100],'unit':'%','ref':{'gen':(55,70)},'cat':'Hematology'},
+    'Lymphocytes': {'kw':['lymphocytes'],'valid':[0,100],'unit':'%','ref':{'gen':(20,40)},'cat':'Hematology'},
+    'Eosinophils': {'kw':['eosinophils'],'valid':[0,100],'unit':'%','ref':{'gen':(0,4)},'cat':'Hematology'},
+    'Monocytes': {'kw':['monocytes'],'valid':[0,100],'unit':'%','ref':{'gen':(0,6)},'cat':'Hematology'},
+    'Basophils': {'kw':['basophils'],'valid':[0,100],'unit':'%','ref':{'gen':(0,1)},'cat':'Hematology'},
+
+    # 🧪 LFT
+    'Bilirubin Total': {'kw':['bilirubin total'],'valid':[0,10],'unit':'mg/dL','ref':{'gen':(0.3,1.2)},'cat':'Liver'},
+    'Bilirubin Direct': {'kw':['direct'],'valid':[0,5],'unit':'mg/dL','ref':{'gen':(0,0.4)},'cat':'Liver'},
+    'SGPT': {'kw':['sgpt','alt'],'valid':[0,500],'unit':'U/L','ref':{'gen':(0,49)},'cat':'Liver'},
+    'SGOT': {'kw':['sgot','ast'],'valid':[0,500],'unit':'U/L','ref':{'gen':(15,45)},'cat':'Liver'},
+    'Protein': {'kw':['total protein'],'valid':[0,20],'unit':'g/dL','ref':{'gen':(6.3,8.3)},'cat':'Liver'},
+    'Albumin': {'kw':['albumin'],'valid':[0,10],'unit':'g/dL','ref':{'gen':(3.6,4.5)},'cat':'Liver'},
+
+    # 🧠 Biochemistry
+    'Glucose': {'kw':['glucose','sugar'],'valid':[30,600],'unit':'mg/dL','ref':{'gen':(70,140)},'cat':'Metabolic'}
 }
 
-RULES = [
-    {'m': {'WBC': 'LOW', 'Platelets': 'LOW', 'Hemoglobin': 'LOW'}, 'd': '🚨 Pancytopenia / Bone Marrow Crisis', 'msg': "Critical reduction in all blood lines. Possible Sepsis or Bone Marrow failure."},
-    {'m': {'ANC': 'CRITICAL'}, 'd': '🚨 Severe Neutropenia (ANC < 500)', 'msg': "Extreme infection risk. Minor infections can be FATAL. Isolation required."},
-    {'m': {'CRP': 'CRITICAL'}, 'd': '🚨 Severe Systemic Inflammation / Sepsis', 'msg': "Critical CRP ({CRP_v} mg/L) indicates severe systemic response."},
-    {'m': {'Hemoglobin': 'LOW', 'MCV': 'LOW', 'RBC': 'NORMAL'}, 'd': '🔴 Thalassemia Pattern', 'msg': "Small RBCs ({MCV_v}) but normal RBC count ({RBC_v}). Check Hb electrophoresis."},
-    {'m': {'eGFR': ['HIGH', 'CRITICAL']}, 'd': '🔴 Chronic Kidney Disease (Stage 3+)', 'msg': "Significant Kidney Impairment (eGFR {eGFR_v}). Nephrology consult required."},
-    {'m': {'Hemoglobin': 'LOW', 'MCV': 'LOW', 'MCH': 'LOW'}, 'd': '🔴 Microcytic Hypochromic Anemia', 'msg': "Small, pale RBCs (MCV {MCV_v}) + Low Hb ({Hemoglobin_v}) → Iron Deficiency pattern."},
-    {'m': {'Hemoglobin': 'CRITICAL'}, 'd': '🚨 Severe Anemia', 'msg': "Life-threatening Hemoglobin level ({Hemoglobin_v} g/dL)."},
-    {'m': {'HbA1c': 'HIGH'}, 'd': '🔴 Diabetes Mellitus', 'msg': "Chronic high blood sugar (HbA1c {HbA1c_v}%)."},
-    {'m': {'Platelets': 'CRITICAL'}, 'd': '🚨 Critical Thrombocytopenia', 'msg': "Critically low platelets ({Platelets_v}) → Bleeding risk."},
-    {'m': {'Hemoglobin': 'LOW'}, 'd': '🔴 Anemia', 'msg': "Low Hemoglobin ({Hemoglobin_v} g/dL)."}
-]
-
-# 3. UTILS & EXTRACTION (Robust AI Parsing)
-def extract_text(p):
-    if p.lower().endswith('.pdf'):
-        if not fitz: return ""
-        text = "".join(page.get_text() for page in fitz.open(p))
-        if len(text.strip()) < 100 and pdf2image:
-            for i, img in enumerate(pdf2image.convert_from_path(p)):
-                img.save("t.png"); text += extract_text("t.png"); os.remove("t.png")
+def extract_text(path):
+    if path.lower().endswith(".pdf") and fitz:
+        text = ""
+        for page in fitz.open(path):
+            text += page.get_text()
         return text
-    return pytesseract.image_to_string(Image.Image.open(p).convert('L'), config='--oem 3 --psm 6') if pytesseract else ""
+
+    if pytesseract and Image:
+        return pytesseract.image_to_string(Image.open(path))
+
+    return ""
 
 def extract_info(text):
-    info = {'name': 'Patient', 'age': None, 'date': None, 'dr': None}
-    for l in text.lower().split('\n'):
-        m = re.search(r'\bage\b\s*[:\-/\\]?\s*(\d+)', l)
-        if m: info['age'] = int(m.group(1))
-        m = re.search(r'(\d+)\s*(years?|yrs?|y)\b', l)
-        if m and (not info['age'] or info['age'] < 5 or 'sex' in l): info['age'] = int(m.group(1))
-        m = re.search(r'name\s*:\s*([^ \d\n][^\n]*)', l)
-        if m: info['name'] = m.group(1).strip().upper()
-        m = re.search(r'date\s*:\s*([\d/\-\.]+)', l)
-        if m: info['date'] = m.group(1)
-        m = re.search(r'dr\.\s*([a-z ]+)', l)
-        if m: info['dr'] = m.group(1).strip().upper()
+
+    import re
+
+    # 🔧 Clean text (important for PDF parsing)
+    text = text.replace("\n", " ").replace("  ", " ")
+
+    info = {
+        'name': 'Patient',
+        'age': None,
+        'date': None,
+        'dr': None
+    }
+
+    name_match = re.search(r'name\s*[:\-]?\s*([A-Za-z ]{3,40})', text, re.IGNORECASE)
+    if name_match:
+        name = name_match.group(1).strip()
+
+        # remove unwanted trailing words
+        name = re.sub(r'\b(age|sex|male|female)\b.*', '', name, flags=re.IGNORECASE)
+
+        if len(name) > 3:
+            info['name'] = name.upper()
+
+
+    # handles: Age / Sex : 55 / Male
+    age_match = re.search(r'age[^0-9]{0,10}(\d{1,3})', text.lower())
+    if age_match:
+        age = int(age_match.group(1))
+        if 5 < age < 100:
+            info['age'] = age
+
+    # fallback (rare case)
+    if info['age'] is None:
+        age_match = re.search(r'\b(\d{2})\s*(years|yrs|y)\b', text.lower())
+        if age_match:
+            info['age'] = int(age_match.group(1))
+
+    date_match = re.search(r'\b\d{2}/\d{2}/\d{4}\b', text)
+    if date_match:
+        info['date'] = date_match.group(0)
+
+    dr_match = re.search(r'(?:dr\.?|ref\.?\s*by)\s*[:\-]?\s*([A-Za-z ]+)', text, re.IGNORECASE)
+    if dr_match:
+        doctor = dr_match.group(1).strip()
+        if len(doctor) > 2:
+            info['dr'] = doctor.upper()
+
+    if info['name'] == 'Patient':
+        fallback = re.search(r'\b[A-Z]{3,}(?: [A-Z]{3,})+\b', text)
+        if fallback:
+            info['name'] = fallback.group(0)
+
     return info
 
 def extract_params(text):
-    ext, text = {}, text.replace(",", "")
-    lines = text.split("\n")
+    extracted = {}
+    lines = text.lower().replace(",", "").split("\n")
+
     for i, line in enumerate(lines):
-        l, nx = line.lower(), (lines[i+1] if i+1 < len(lines) else "")
-        for p, c in PARAM_KB.items():
-            if p in ext: continue
-            for kw in c['kw']:
-                if kw in l:
-                    if c.get('bool'): ext[p] = 1 if any(k in l for k in ['present', 'positive', 'trace', 'growth']) else 0
-                    else:
-                        m = re.search(r"(\d+\.?\d*)", line[l.find(kw)+len(kw):]) or re.search(r"(\d+\.?\d*)", nx)
-                        if m and c['valid'][0] <= float(m.group(1)) <= c['valid'][1]: ext[p] = float(m.group(1))
-                    if p in ext: break
-    return ext
+        for param, config in PARAM_KB.items():
 
-# 4. ENGINE (Clinical Logic)
-def analyze_parameter(name, value, gender='gen'):
-    c = PARAM_KB[name]
-    lo, hi = c['ref'].get(gender, c['ref']['gen'])
-    t, s, sev = c.get('t', {}), '🟢 NORMAL', 'NORMAL'
-    if c.get('bool'):
-        if value > 0: s, sev = ('🔴 Infection' if name == 'Blood Culture' else '🟡 ABNORMAL'), ('HIGH' if name == 'Blood Culture' else 'SLIGHT')
-    elif value < t.get('v_low', -1): s, sev = f'🚨 CRITICAL LOW ({name})', 'CRITICAL'
-    elif value < t.get('mod_low', -1): s, sev = '🔴 MODERATE LOW', 'HIGH'
-    elif value < lo: s, sev = ('🟡 Slight LOW' if value >= t.get('s_low', -1) else '🔴 LOW'), ('SLIGHT' if value >= t.get('s_low', -1) else 'HIGH')
-    elif value > t.get('v_high', 1e9): s, sev = '🚨 VERY HIGH', 'CRITICAL'
-    elif value > t.get('mod_high', 1e9): s, sev = ('🔴 Stage 3 CKD' if name == 'eGFR' else '🔴 HIGH'), 'HIGH'
-    elif value > hi:
-        if value <= t.get('s_high', 1e9): s, sev = '🟡 Slight HIGH', 'SLIGHT'
-        elif name == 'HbA1c' and value <= t.get('pre', 6.4): s, sev = '🟡 PREDIABETES', 'SLIGHT'
-        else: s, sev = '🔴 HIGH' if name != 'HbA1c' else '🔴 DIABETES', 'HIGH'
-    return {'parameter': name, 'status': s, 'severity': sev, 'value': value, 'unit': c.get('unit', ''), 'low': lo, 'high': hi, 'cat': c.get('cat', 'Other')}
+            if param in extracted:
+                continue
 
-def generate_diagnosis(results):
-    p_map, parts = {r['parameter']: r for r in results}, []
-    for r in RULES:
-        match = all(any(x in p_map.get(k, {}).get('status', '') for x in ([v] if isinstance(v, str) else v)) for k, v in r['m'].items())
-        if match:
-            if not any(word in " ".join(parts) for word in r['d'].split() if len(word) > 4): parts.append(r['d'])
-    return " + ".join(parts) or ("🟢 Normal Health" if not any(r['severity'] != 'NORMAL' for r in results) else "🟡 Abnormal Findings")
+            for kw in config['kw']:
+                if kw in line:
 
-def generate_advice(results, diagnosis):
-    advices, is_crit = set(), any(r['severity'] == 'CRITICAL' for r in results)
+                    m = re.search(r"(\d+\.?\d*)", line)
+                    if not m and i+1 < len(lines):
+                        m = re.search(r"(\d+\.?\d*)", lines[i+1])
+
+                    if m:
+                        val = float(m.group(1))
+                        if config['valid'][0] <= val <= config['valid'][1]:
+                            extracted[param] = val
+                            break
+
+    return extracted
+
+def analyze_parameter(name, value):
+    ref = PARAMETERS.get(name)
+
+    if ref:
+        lo = ref["min"]
+        hi = ref["max"]
+        unit = ref["unit"]
+
+        if value < lo:
+            status = "LOW"
+            reasons = ref["low_reasons"]
+        elif value > hi:
+            status = "HIGH"
+            reasons = ref["high_reasons"]
+        else:
+            status = "NORMAL"
+            reasons = []
+
+        return {
+            "parameter": name,
+            "value": value,
+            "unit": unit,
+            "low": lo,
+            "high": hi,
+            "status": status,
+            "reasons": reasons
+        }
+
+    c = PARAM_KB.get(name)
+    if c:
+        lo_hi = c['ref'].get('gen') if 'gen' in c['ref'] else next(iter(c['ref'].values()))
+        lo, hi = lo_hi
+        unit = c.get('unit', '')
+
+        if value < lo:
+            status = "LOW"
+        elif value > hi:
+            status = "HIGH"
+        else:
+            status = "NORMAL"
+
+        return {
+            "parameter": name,
+            "value": value,
+            "unit": unit,
+            "low": lo,
+            "high": hi,
+            "status": status,
+            "reasons": []
+        }
+
+    return {
+        "parameter": name,
+        "value": value,
+        "unit": "",
+        "low": None,
+        "high": None,
+        "status": "UNKNOWN",
+        "reasons": []
+    }
+
+
+def generate_interpretation(results):
+    summary = []
+
     for r in results:
-        if r['severity'] == 'NORMAL': continue
-        kb_adv = PARAM_KB[r['parameter']].get('advice', {})
-        msg = kb_adv.get(r['status']) or kb_adv.get(r['severity'])
-        if msg and (not is_crit or "diet" not in msg.lower()): advices.add(msg)
-    return " | ".join(filter(None, advices)) or "Consult Physician."
+        if r["status"] != "NORMAL":
+            line = f"• {r['parameter']} is {r['status']} ({r['value']} {r['unit']}). "
+            reasons_text = ', '.join(r['reasons'][:3]) if r['reasons'] else 'No specific cause'
+            line += f"Possible reasons: {reasons_text}."
+            summary.append(line)
 
-def generate_formatted_report(results, info):
-    diag = generate_diagnosis(results)
-    report = f"🩺 📊 HEALTHADVISOR AI REPORT — {info['name']} (Age {info['age'] or '??'})\n"
-    if info['dr']: report += f"👨‍⚕️ Ref. By: {info['dr']}\n"
-    if info['date']: report += f"📅 Date: {info['date']}\n"
-    report += "\n🔍 KEY FINDINGS (ABNORMALITIES)\n"
-    cats = sorted(list(set(r['cat'] for r in results if r['severity'] != 'NORMAL')))
-    for cat in cats:
-        report += f"\n[{cat}]\n"
-        for r in [x for x in results if x['cat'] == cat and x['severity'] != 'NORMAL']:
-            report += f" • {r['parameter']}: {r['value']} {r['unit']} (Ref: {r['low']}-{r['high']}) → {r['status']}\n"
-    report += f"\n🧠 PROBABLE DIAGNOSIS\n{diag}\n\n⚠️ CLINICAL INTERPRETATION\n"
-    interp = "Abnormal results detected. Clinical correlation required."
-    for r in RULES:
-        if r['d'] in diag: interp = r['msg'].format(**{f"{k}_v": results[0].get('value', 'N/A') for k in PARAM_KB}); break
-    report += f"{interp}\n\n💡 MEDICAL ADVICE\n{generate_advice(results, diag)}"
-    return report
+    if not summary:
+        return "✅ All parameters are within normal range."
 
-def run_analysis(path, name='Patient', gender='gen', plot=False):
+    return "🧠 Key Findings:\n\n" + "\n".join(summary)
+
+
+def generate_smart_summary(results):
+
+    summary = "🧠 📊 MAIN FINDINGS FROM YOUR REPORT\n\n"
+
+    abnormal = [r for r in results if r['status'] != 'NORMAL']
+
+    if not abnormal:
+        return "✅ All parameters are normal."
+
+    summary += "🔴 Abnormal Values:\n"
+    for r in abnormal:
+        summary += f"{r['parameter']}: {r['value']} {r['unit']} ({r['status']})\n"
+
+    return summary
+
+def run_analysis(path, name='Patient', gender='gen'):
+
     text = extract_text(path)
-    info, params = extract_info(text), extract_params(text)
-    if name != 'Patient': info['name'] = name
-    results = [analyze_parameter(p, v, gender) for p, v in params.items()]
-    return {'results': results, 'patient_info': info, 'formatted_report': generate_formatted_report(results, info)}
 
-analyze_parameter_with_severity = analyze_parameter
-def analyze_all_parameters(params, gender='gen'): return [analyze_parameter(p, v, gender) for p, v in params.items()]
-extract_text_from_pdf = extract_text_from_image = extract_text_from_scanned_pdf = extract_text
-extract_patient_info = extract_info
-extract_medical_parameters = extract_params
-PARAM_CONFIG = PARAM_KB
+    info = extract_info(text) 
+    params = extract_params(text)
+
+    if name != 'Patient':
+        info['name'] = name
+
+    results = [analyze_parameter(p, v) for p, v in params.items()]
+
+    summary = generate_smart_summary(results)
+    interpretation = generate_interpretation(results)
+
+    return {
+        "results": results,
+        "summary": summary,
+        "interpretation": interpretation,
+        "patient_info": info   
+    }
 
 if __name__ == "__main__":
-    print("🏥 AI ANALYZER READY")
+    print("✅ Updated AI Ready")
