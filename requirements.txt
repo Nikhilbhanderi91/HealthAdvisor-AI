@@ -5,3 +5,10 @@ pytesseract
 pdf2image
 deep-translator
 pymupdf
+certifi
+flask
+flask-cors
+easyocr
+matplotlib
+seaborn
+openpyxl
