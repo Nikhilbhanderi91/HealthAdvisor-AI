@@ -1,6 +1,14 @@
 import streamlit as st
+import os
+from PIL import Image
 
-st.set_page_config(page_title="Health Advisor AI", page_icon="🏥", layout="wide", initial_sidebar_state="collapsed")
+favicon_path = os.path.join(os.path.dirname(__file__), "health-report.png")
+try:
+    favicon = Image.open(favicon_path)
+except Exception:
+    favicon = "🏥"
+
+st.set_page_config(page_title="Health Advisor AI", page_icon=favicon, layout="wide", initial_sidebar_state="collapsed")
 
 # Custom CSS styling for beautiful landing page
 st.markdown(

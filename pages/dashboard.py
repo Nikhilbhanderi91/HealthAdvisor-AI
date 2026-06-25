@@ -2,8 +2,15 @@ import streamlit as st
 import os
 import pandas as pd
 from deep_translator import GoogleTranslator
+from PIL import Image
 
-st.set_page_config(page_title="Health Dashboard", page_icon="📊", layout="wide", initial_sidebar_state="collapsed")
+favicon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "health-report.png")
+try:
+    favicon = Image.open(favicon_path)
+except Exception:
+    favicon = "📊"
+
+st.set_page_config(page_title="Health Dashboard", page_icon=favicon, layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown(
     """

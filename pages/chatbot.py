@@ -1,5 +1,6 @@
 import streamlit as st
 from deep_translator import GoogleTranslator
+from PIL import Image
 
 # ✅ IMPORT DISEASE LOGIC
 import sys
@@ -7,7 +8,13 @@ import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from disease_predictor import predict_diseases
 
-st.set_page_config(page_title="Health Assistant", page_icon="💬", layout="wide", initial_sidebar_state="collapsed")
+favicon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "health-report.png")
+try:
+    favicon = Image.open(favicon_path)
+except Exception:
+    favicon = "💬"
+
+st.set_page_config(page_title="Health Assistant", page_icon=favicon, layout="wide", initial_sidebar_state="collapsed")
 
 st.markdown(
     """
