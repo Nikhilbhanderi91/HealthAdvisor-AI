@@ -44,6 +44,17 @@ def t(text):
         return translate_to_gujarati(text)
     return text
 
+
+def render_ai_html(content):
+    if not content:
+        return
+    content = str(content)
+    content = content.replace("```html", "")
+    content = content.replace("```HTML", "")
+    content = content.replace("```", "")
+    content = content.strip()
+    st.markdown(content, unsafe_allow_html=True)
+
 favicon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "health-report.png")
 try:
     favicon = Image.open(favicon_path)
@@ -330,11 +341,13 @@ if analyze_clicked:
             summary = analysis_result['summary']
             interpretation = analysis_result['interpretation']
             info = analysis_result['patient_info']
+            ai_summary = analysis_result.get('ai_summary')
 
             st.session_state["results"] = results
             st.session_state["summary"] = summary
             st.session_state["interpretation"] = interpretation
             st.session_state["info"] = info
+            st.session_state["ai_summary"] = ai_summary
             st.session_state.analysis_done = True
 
         st.success(t("✅ Analysis Completed"))
@@ -345,6 +358,7 @@ if st.session_state.analysis_done:
     results = st.session_state.get("results", [])
     summary = st.session_state.get("summary", "")
     info = st.session_state.get("info", {})
+    ai_summary = st.session_state.get("ai_summary", None)
     
     # Calculate metrics for cards
     total_params = len(results)
@@ -425,7 +439,8 @@ if st.session_state.analysis_done:
             </table>
         </div>
         """
-        return html
+        import textwrap
+        return textwrap.dedent(html)
 
     def generate_interpretation_table_html(table_data, t):
         html = f"""
@@ -474,7 +489,8 @@ if st.session_state.analysis_done:
             </table>
         </div>
         """
-        return html
+        import textwrap
+        return textwrap.dedent(html)
 
     st.markdown("---")
     st.markdown(f"""
@@ -562,10 +578,11 @@ if st.session_state.analysis_done:
     st.markdown("---")
     
     # Beautifully styled Interactive Tabs
-    tab1, tab2, tab3 = st.tabs([
+    tab1, tab2, tab3, tab4 = st.tabs([
         "📊 " + t("Parameters & Metrics"),
         "🩺 " + t("Clinical Analysis & Advice"),
-        "🧠 " + t("AI Report Summary")
+        "📝 " + t("Rule-Based Summary"),
+        "🤖 " + t("AI Health Insights")
     ])
 
     with tab1:
@@ -626,13 +643,13 @@ if st.session_state.analysis_done:
             """, unsafe_allow_html=True)
 
     with tab3:
-        st.markdown("<h3 style='color: #4a4e3b; margin-top: 15px; margin-bottom: 15px;'>🧠 " + t("AI Report Summary") + "</h3>", unsafe_allow_html=True)
+        st.markdown("<h3 style='color: #4a4e3b; margin-top: 15px; margin-bottom: 15px;'>📝 " + t("Rule-Based Summary") + "</h3>", unsafe_allow_html=True)
         
         # Summary Card
         st.markdown(f"""
             <div style="background: rgba(245, 243, 230, 0.8); border: 1px solid rgba(156, 166, 131, 0.3); padding: 30px; border-radius: 24px; box-shadow: 0 8px 32px rgba(156, 166, 131, 0.05); line-height: 1.7; color: #4a4e3b; font-size: 16px; margin-bottom: 30px;">
                 <div style="font-weight: 800; font-size: 18px; margin-bottom: 15px; color: #9ca683; display: flex; align-items: center; gap: 8px;">
-                    🧬 {t('AI MEDICAL SUMMARY')}
+                    🧬 {t('RULE-BASED SUMMARY')}
                 </div>
                 {t(summary)}
             </div>
@@ -656,6 +673,53 @@ if st.session_state.analysis_done:
             st.markdown(generate_interpretation_table_html(table_data, t), unsafe_allow_html=True)
         else:
             st.success(t("✅ All parameters are normal"))
+
+    with tab4:
+        st.markdown("<h3 style='color: #4a4e3b; margin-top: 15px; margin-bottom: 15px;'>🤖 " + t("AI Health Insights") + "</h3>", unsafe_allow_html=True)
+        from services.gemini_service import is_gemini_available
+        if not is_gemini_available():
+            st.warning(t("⚠️ Gemini AI is currently unavailable. Please check your API configuration and try again."))
+        elif not ai_summary:
+            st.warning(t("⚠️ No AI summary generated. Please analyze a medical report first."))
+        elif isinstance(ai_summary, dict) and "error" in ai_summary:
+            st.error(f"⚠️ {ai_summary['error']}")
+        else:
+            if isinstance(ai_summary, dict):
+                # Overview
+                st.markdown(f"#### 📋 {t('Report Overview')}")
+                render_ai_html(ai_summary.get("report_overview", ""))
+                
+                # Normal & Abnormal
+                col_normal, col_abnormal = st.columns(2)
+                with col_normal:
+                    st.markdown(f"#### 🟢 {t('Normal Results')}")
+                    render_ai_html(ai_summary.get("normal_results", ""))
+                with col_abnormal:
+                    st.markdown(f"#### 🟠 {t('Abnormal Results')}")
+                    render_ai_html(ai_summary.get("abnormal_results", ""))
+                
+                # Easy Explanation
+                st.markdown(f"#### 🧠 {t('Easy Explanation')}")
+                render_ai_html(ai_summary.get("easy_explanation", ""))
+                
+                # Overall Insight & Next Step
+                col_insight, col_step = st.columns(2)
+                with col_insight:
+                    st.markdown(f"#### 💡 {t('Overall Insight')}")
+                    render_ai_html(ai_summary.get("overall_insight", ""))
+                with col_step:
+                    st.markdown(f"#### 👨‍⚕️ {t('Suggested Next Step')}")
+                    render_ai_html(ai_summary.get("suggested_next_step", ""))
+                
+                # Gujarati Explanation
+                st.markdown(f"#### 🇮🇳 {t('Gujarati Explanation')}")
+                render_ai_html(ai_summary.get("gujarati_explanation", ""))
+            else:
+                render_ai_html(ai_summary)
+            
+            # Disclaimer
+            st.markdown("---")
+            st.warning(f"⚠️ **{t('Medical Disclaimer')}:** {t('This AI-generated information is for educational purposes only and does not replace professional medical advice, diagnosis, or treatment.')}")
 
     st.markdown("---")
     st.markdown(f"""

@@ -1,6 +1,8 @@
 import os, re, warnings
 from PIL import Image
 import pytesseract
+from dotenv import load_dotenv
+load_dotenv()
 
 warnings.filterwarnings('ignore')
 
@@ -348,11 +350,22 @@ def run_analysis(path, name='Patient', gender='gen'):
     summary = generate_smart_summary(results)
     interpretation = generate_interpretation(results)
 
+    # Call Gemini to get AI insights if API is configured
+    from services.gemini_service import generate_report_summary, is_gemini_available
+    ai_summary = None
+    if is_gemini_available():
+        report_data = {
+            "results": results,
+            "patient_info": info
+        }
+        ai_summary = generate_report_summary(report_data)
+
     return {
         "results": results,
         "summary": summary,
         "interpretation": interpretation,
-        "patient_info": info   
+        "patient_info": info,
+        "ai_summary": ai_summary
     }
 
 if __name__ == "__main__":

@@ -12,3 +12,5 @@ easyocr
 matplotlib
 seaborn
 openpyxl
+google-generativeai
+python-dotenv

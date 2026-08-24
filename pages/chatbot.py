@@ -7,6 +7,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from disease_predictor import predict_diseases
+from services.gemini_service import chat_with_health_assistant, is_gemini_available
 
 favicon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "health-report.png")
 try:
@@ -159,9 +160,21 @@ if "chat_history" not in st.session_state:
 def add_message(role, text):
     st.session_state.chat_history.append((role, translate(text)))
 
+def render_chat_message(content):
+    if not content:
+        return
+    content = str(content)
+    content = content.replace("```html", "")
+    content = content.replace("```HTML", "")
+    content = content.replace("```", "")
+    content = content.strip()
+    
+    import textwrap
+    st.markdown(textwrap.dedent(content), unsafe_allow_html=True)
+
 for role, msg in st.session_state.chat_history:
     with st.chat_message(role):
-        st.write(msg)
+        render_chat_message(msg)
 
 st.markdown("---")
 
@@ -171,104 +184,161 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
+# Add helper for button prompts to Gemini
+def ask_gemini_button(user_query, fallback_text):
+    st.session_state.chat_history.append(("user", translate(user_query)))
+    if is_gemini_available():
+        report_data = {"results": results, "patient_info": info}
+        with st.spinner(translate("Thinking...")):
+            response = chat_with_health_assistant(report_data, user_query, st.session_state.chat_history[:-1])
+        st.session_state.chat_history.append(("assistant", response))
+    else:
+        st.session_state.chat_history.append(("assistant", translate(fallback_text)))
+    st.rerun()
+
 col1, col2 = st.columns(2)
 
 # 📊 SUMMARY
 if col1.button("📊 Smart Summary", use_container_width=True):
-    add_message("user", "Show smart summary")
-    add_message("assistant", summary)
-    st.rerun()
+    fallback_summary = f"""
+    <div style="background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(213, 198, 141, 0.4); padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.02);">
+        <h4 style="margin: 0 0 10px 0; color: #4a4e3b; font-weight: 700;">📊 {translate("Smart Summary")}</h4>
+        <div style="color: #1a1d13; line-height: 1.5; font-size: 14px;">{summary}</div>
+    </div>
+    """
+    ask_gemini_button("Provide a smart summary of my report", fallback_summary)
 
 # 👤 PATIENT INFO
 if col2.button("👤 Patient Info", use_container_width=True):
-    add_message("user", "Show patient info")
-
     text = f"""
-👤 Name: {info.get('name','N/A')}
-🎂 Age: {info.get('age','N/A')}
-📅 Date: {info.get('date','N/A')}
-"""
-    add_message("assistant", text)
-    st.rerun()
+    <div style="background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(213, 198, 141, 0.4); padding: 15px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.02);">
+        <h4 style="margin: 0 0 10px 0; color: #4a4e3b; font-weight: 700;">👤 {translate("Patient Information")}</h4>
+        <ul style="list-style-type: none; padding-left: 0; margin: 0; font-size: 14px;">
+            <li style="margin-bottom: 5px; color: #1a1d13;"><b>Name:</b> {info.get('name','N/A')}</li>
+            <li style="margin-bottom: 5px; color: #1a1d13;"><b>Age:</b> {info.get('age','N/A')}</li>
+            <li style="margin-bottom: 0; color: #1a1d13;"><b>Date:</b> {info.get('date','N/A')}</li>
+        </ul>
+    </div>
+    """
+    ask_gemini_button("Show patient info", text)
 
-# 🧠 DISEASE EXPLANATION (FIXED)
+# 🧠 DISEASE EXPLANATION
 if col1.button("🧠 Disease Explanation", use_container_width=True):
-    add_message("user", "Explain my condition")
-
     diseases = predict_diseases(results)
-
     abnormal = [r for r in results if "LOW" in r['status'] or "HIGH" in r['status']]
-
-    if not diseases and not abnormal:
-        add_message("assistant", " Your report is normal.")
+    
+    fallback = f"""
+    <div style="background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(213, 198, 141, 0.4); padding: 15px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.02);">
+        <h4 style="margin: 0 0 10px 0; color: #4a4e3b; font-weight: 700;">🧠 {translate("Possible Health Conditions")}</h4>
+    """
+    if diseases:
+        for d in diseases:
+            fallback += f"""
+            <div style="margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px dashed rgba(213, 198, 141, 0.5);">
+                <span style="font-weight: 700; color: #b91c1c;">🔸 {translate(d['name'])} ({translate(d['confidence'])})</span><br/>
+                <span style="font-size: 13px; color: #1a1d13;"><b>Reason:</b> {translate(d['reason'])}</span><br/>
+                <span style="font-size: 13px; color: #047857;"><b>Advice:</b> {translate(d['advice'])}</span>
+            </div>
+            """
+    elif abnormal:
+        fallback += f"""
+        <div style="color: #b45309; font-weight: 600; margin-bottom: 10px;">⚠️ {translate("Some parameters are abnormal but no clear disease pattern detected.")}</div>
+        """
     else:
-        msg = "🧠 Possible Health Conditions:\n\n"
+        fallback += f"""
+        <div style="color: #047857; font-weight: 600; margin-bottom: 10px;">✅ {translate("Your report is normal.")}</div>
+        """
+    fallback += f"""
+        <div style="font-size: 13px; color: #b91c1c; font-weight: 600; margin-top: 5px;">👉 {translate("Please consult a doctor for confirmation.")}</div>
+    </div>
+    """
+    ask_gemini_button("Explain my possible conditions and diseases based on the report abnormalities", fallback)
 
-        if diseases:
-            for d in diseases:
-                msg += f"🔸 {d['name']} ({d['confidence']})\n"
-                msg += f"➤ Reason: {d['reason']}\n"
-                msg += f"💡 Advice: {d['advice']}\n\n"
-        else:
-            msg += "⚠️ Some parameters are abnormal but no clear disease pattern detected.\n\n"
-
-        msg += "👉 Please consult a doctor for confirmation."
-        add_message("assistant", msg)
-
-    st.rerun()
-
-# 💡 PERSONALIZED ADVICE (IMPROVED)
+# 💡 PERSONALIZED ADVICE
 if col2.button("💡 Personalized Advice", use_container_width=True):
-    add_message("user", "Give me advice")
-
-    advice = "💡 Health Advice:\n\n"
-
+    advice = f"""
+    <div style="background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(213, 198, 141, 0.4); padding: 15px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.02);">
+        <h4 style="margin: 0 0 10px 0; color: #4a4e3b; font-weight: 700;">💡 {translate("Health Advice")}</h4>
+        <ul style="padding-left: 20px; margin: 0 0 10px 0; color: #1a1d13; font-size: 14px;">
+    """
     abnormal = False
-
     for r in results:
         if "LOW" in r['status']:
-            advice += f"- {r['parameter']}: Increase with proper nutrition\n"
+            advice += f"<li><b>{translate(r['parameter'])}:</b> {translate('Increase with proper nutrition')}</li>"
             abnormal = True
         elif "HIGH" in r['status']:
-            advice += f"- {r['parameter']}: Control with lifestyle changes\n"
+            advice += f"<li><b>{translate(r['parameter'])}:</b> {translate('Control with lifestyle changes')}</li>"
             abnormal = True
-
     if not abnormal:
-        advice += "All parameters are normal. Maintain healthy lifestyle."
-
-    advice += "\n\n✔ Balanced diet\n✔ Regular exercise\n✔ Doctor consultation"
-
-    add_message("assistant", advice)
-    st.rerun()
+        advice += f"<li>{translate('All parameters are normal. Maintain healthy lifestyle.')}</li>"
+    advice += f"""
+        </ul>
+        <div style="font-weight: 600; color: #047857; margin-top: 10px; font-size: 13px;">
+            ✔ {translate("Balanced diet")} | ✔ {translate("Regular exercise")} | ✔ {translate("Doctor consultation")}
+        </div>
+    </div>
+    """
+    ask_gemini_button("Give me personalized health and diet advice based on my parameters", advice)
 
 # 📈 IMPROVEMENT TRACKING
 if col1.button("📈 Improvement Tips", use_container_width=True):
-    add_message("user", "How to improve")
-
-    add_message("assistant",
-    """📈 Improvement Plan:
-- Iron-rich diet (spinach, dates, jaggery)
-- Drink more water
-- Proper sleep (7–8 hours)
-- Regular exercise
-- Re-test after 15 days""")
-
-    st.rerun()
+    fallback = f"""
+    <div style="background: rgba(255, 255, 255, 0.65); border: 1px solid rgba(213, 198, 141, 0.4); padding: 15px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.02);">
+        <h4 style="margin: 0 0 10px 0; color: #4a4e3b; font-weight: 700;">📈 {translate("Improvement Plan")}</h4>
+        <ul style="padding-left: 20px; margin: 0; color: #1a1d13; font-size: 14px;">
+            <li>{translate("Iron-rich diet (spinach, dates, jaggery)")}</li>
+            <li>{translate("Drink more water")}</li>
+            <li>{translate("Proper sleep (7–8 hours)")}</li>
+            <li>{translate("Regular exercise")}</li>
+            <li>{translate("Re-test after 15 days")}</li>
+        </ul>
+    </div>
+    """
+    ask_gemini_button("How can I improve my abnormal parameter values?", fallback)
 
 if col2.button("🚨 Critical Check", use_container_width=True):
-    add_message("user", "Check critical values")
-
     critical = [r for r in results if "CRITICAL" in r['status']]
-
     if critical:
-        msg = "🚨 Critical Conditions:\n"
+        fallback = f"""
+        <div style="background: rgba(254, 226, 226, 0.9); border: 1px solid #f87171; padding: 15px; border-radius: 12px; box-shadow: 0 4px 15px rgba(220, 38, 38, 0.05);">
+            <h4 style="margin: 0 0 10px 0; color: #991b1b; font-weight: 800;">🚨 {translate("Critical Conditions")}</h4>
+            <ul style="padding-left: 20px; margin: 0 0 10px 0; color: #991b1b; font-size: 14px;">
+        """
         for r in critical:
-            msg += f"- {r['parameter']} is {r['status']}\n"
-        msg += "\n👉 Immediate doctor consultation required!"
+            fallback += f"<li><b>{translate(r['parameter'])}</b> {translate('is in critical status')} ({r['value']} {r['unit']})</li>"
+        fallback += f"""
+            </ul>
+            <div style="font-weight: 700; color: #dc2626; font-size: 14px;">👉 {translate("Immediate doctor consultation required!")}</div>
+        </div>
+        """
     else:
-        msg = "✅ No critical conditions detected."
+        fallback = f"""
+        <div style="background: rgba(209, 250, 229, 0.9); border: 1px solid #34d399; padding: 15px; border-radius: 12px; color: #065f46; font-weight: 700; font-size: 14px;">
+            ✅ {translate("No critical conditions detected.")}
+        </div>
+        """
+    ask_gemini_button("Check if any of my parameters are in critical state", fallback)
 
-    add_message("assistant", msg)
+# Free-text user question
+user_input = st.chat_input(translate("Ask questions about your uploaded report..."))
+if user_input:
+    # Append user question
+    st.session_state.chat_history.append(("user", user_input))
+    st.rerun()
+
+# Generate response if the last message is from user
+if st.session_state.chat_history and st.session_state.chat_history[-1][0] == "user":
+    last_query = st.session_state.chat_history[-1][1]
+    report_data = {
+        "results": results,
+        "patient_info": info
+    }
+    if is_gemini_available():
+        response = chat_with_health_assistant(report_data, last_query, st.session_state.chat_history[:-1])
+    else:
+        response = translate("⚠️ Gemini AI is currently unavailable. Please check your API configuration and try again.")
+    
+    st.session_state.chat_history.append(("assistant", response))
     st.rerun()
 
 st.markdown("---")
